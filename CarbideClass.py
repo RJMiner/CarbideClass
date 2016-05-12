@@ -152,14 +152,46 @@ def tight(thing):
         rslt = thing
     return rslt
 
+_cos_rot = _sin_rot = 0.0
+
+def set_rotation(rot):
+    global _cos_rot, _sin_rot
+    rot = math.radians(rot)
+    _cos_rot = math.cos(rot)
+    _sin_rot = math.sin(rot)
+
+def rotate(xx, yy):
+    global _cos_rot, _sin_rot
+    tx = _cos_rot*xx - _sin_rot*yy
+    ty = _sin_rot*xx + _cos_rot*yy
+    return tx,ty
+
+# --------------------------------------------------------
+
+class extents:
+    def __init__(self, low=-10000, high=10000):
+        self.lft = high
+        self.top = low
+        self.rit = low
+        self.btm = high
+    
+    def test(self, xx, yy):
+        if xx < self.lft: self.lft = xx  #
+        if xx > self.rit: self.rit = xx  #
+        if yy < self.btm: self.btm = yy  #
+        if yy > self.top: self.top = yy  #
+    
+    def extents(self):
+        return (self.lft, self.btm, self.rit, self.top)
+    
 # -----------------------------------------------------------
 
-class CC_CNC:
+class CNC:
     def __init__(self, filename=None, use_mm=True, width=340, height=280,
                  thickness=12.7, gridspacing=3, machine='XL',
                  beta=CURR_BETA):
-        if filename is not None: filename = str(filename) #
-        if beta == 0: beta = EARLY_BETA #
+        if filename is not None: filename = str(filename)  #
+        if beta == 0: beta = EARLY_BETA  #
         machlbl = machine_label(machine)
         
         self.filename = filename
@@ -229,11 +261,7 @@ class CC_CNC:
     
     def getvalue(self, key):
         vals = self.content[CC_VALUES]
-        try:
-            return vals[key]
-        except:
-            pass
-        return 0
+        return vals[key] if key in vals else None
     
     def getgroup(self, groupref):
         try:
@@ -267,7 +295,10 @@ class CC_CNC:
                 break
         if rslt is None:
             for group in self.cc_uuidgroups:
-                tmp = self.getobject(group, )
+                tmp = self.getobject(group, ccid)
+                if tmp is not None:
+                    rslt = [group, tmp]
+                    break
         return rslt
     
     def gettoolpath(self, name):
@@ -285,15 +316,11 @@ class CC_CNC:
     
     def setvalue(self, valname, val):
         vals = self.content[CC_VALUES]
-        if valname not in vals:
-            if valname.upper() in vals:
-                valname = valname.upper()
-            elif valname.lower() in vals:
-                valname = valname.lower()
         vals[valname] = val
     
     def load(self, filename):
         txt = ''
+        if '.' not in filename: filename += '.c2d'  #
         try:
             fin = open(filename, 'r')
             txt = fin.read()
@@ -314,7 +341,7 @@ class CC_CNC:
                 for obj in objects:
                     if 'id' in obj:
                         tmpid = obj['id']
-                        if tmpid >= nextid: nextid = tmpid + 1 #
+                        if tmpid >= nextid: nextid = tmpid + 1  #
             self.nextid = nextid
         return True
 
@@ -332,20 +359,22 @@ class CC_CNC:
                 if len(path['contour']) > 0:
                     contest = True
                     break
-        
+
+        idset = uuidset = None
+
         for known in KNOWN_BETA:
             #print('Testing beta %s' % known)
             all_ok = has_polygons(known) == polytest
-            #if not all_ok: print('Failed poly test') #
+            #if not all_ok: print('Failed poly test')  #
             if all_ok and concount > 0:
                 all_ok = has_contour(known) == contest
-                #if not all_ok: print('Failed contour test') #
+                #if not all_ok: print('Failed contour test')  #
             if all_ok and crv is not None:
                 all_ok = ('closed' in crv) == has_closed_flag(known)
-                #if not all_ok: print('Failed closed curve test') #
+                #if not all_ok: print('Failed closed curve test')  #
                 if all_ok:
                     all_ok = ('point_type' in crv) == has_point_type(known)
-                    #if not all_ok: print('Failed point_type test') #
+                    #if not all_ok: print('Failed point_type test')  #
             if all_ok:
                 q,idset,qq,uuidset = beta_groups(known)
                 if has_uuid(known):
@@ -354,7 +383,7 @@ class CC_CNC:
                         if item in self.content:
                             all_ok = True
                             break
-                    #if not all_ok: print('Failed uuid test') #
+                    #if not all_ok: print('Failed uuid test')  #
             if all_ok:
                 idcount = 0
                 idtest = False
@@ -368,19 +397,20 @@ class CC_CNC:
                                 break
                         if idcount > 0: break
                 all_ok = (idcount < 1) or (id_is_int(known) == idtest)
-                #if not all_ok: print('Failed id_is_int test') #
-            if all_ok: possible.append(known) #
+                #if not all_ok: print('Failed id_is_int test')  #
+            if all_ok: possible.append(known)  #
         
         self.beta = possible[-1] if len(possible) > 0 else 'BAD'
     
     def save(self, filename=None):
-        if filename is None: filename = self.filename #
-        
+        if filename is None: filename = self.filename  #
+        if '.' not in filename: filename += '.c2d'  #
+
         try:
             fout = open(filename, 'w')
             fout.write(self.__repr__())
             fout.close()
-            if self.filename is None: self.filename = filename #
+            if self.filename is None: self.filename = filename  #
         except:
             pass
     
@@ -393,7 +423,7 @@ class CC_CNC:
         
         rslt = ('CNC File: "%s" (beta %s) %5dw x %dh' % 
                 (filename, beta, width, height))
-        if id_int: rslt += ', Next ID: %d' % self.nextid #
+        if id_int: rslt += ', Next ID: %d' % self.nextid  #
 
         groups = list(self.content.keys())
         groups.sort()
@@ -422,7 +452,7 @@ class CC_CNC:
         objects = self.content[group]
         pathnames = []
         for path in objects:
-            if 'name' in path: pathnames.append(path['name'].lower()) #
+            if 'name' in path: pathnames.append(path['name'].lower())  #
         while test.lower() in pathnames:
             test = nextlabel(test)
         return test
@@ -477,7 +507,7 @@ class CC_CNC:
         elif group in self.cc_uuidgroups:
             obj.uuid = newuuid()
 
-        if group not in self.content: self.content[group] = [] #
+        if group not in self.content: self.content[group] = []  #
         self.content[group].append(obj.obj_dict())
     
     def add_pathlink(self, pathlink):
@@ -494,10 +524,117 @@ class CC_CNC:
                         if link == ll:
                             linkseek = False
                             break
-                    if linkseek: linkset.append(link) #
+                    if linkseek: linkset.append(link)  #
                 uuseek = False
                 break
-        if uuseek: uuset.append(pathlink) #
+        if uuseek: uuset.append(pathlink)  #
+        return
+    
+    def extents(self):
+        ext = extents()
+        
+        for group in self.cc_idgroups:
+            objects = self.getgroup(group)
+            for obj in objects:
+                if 'position' in obj:
+                    ox,oy = obj['position']
+                else:
+                    ox = oy = 0.0
+                
+                if group == CC_CURVES:
+                    points = obj['points']
+                    for pnt in points:
+                        ext.test(ox + pnt[0], oy + pnt[1])
+                
+                elif group == CC_POLYGONS:
+                    rot = obj['rotation']
+                    dorot = rot != 0.0
+                    if dorot: set_rotation(rot)  #
+                    
+                    points = obj['points']
+                    for pnt in points:
+                        xx, yy = pnt
+                        if dorot: xx,yy = rotate(xx, yy)  #
+                        ext.test(ox + xx, oy + yy)
+                
+                elif group == CC_RECTS:
+                    wd2 = obj['width'] / 2
+                    hd2 = obj['height'] / 2
+                    rot = obj['rotation']
+                    dorot = rot != 0.0
+                    if dorot: set_rotation(rot)  #
+                    xx,yy = rotate(ox-wd2, oy-hd2)
+                    ext.test(xx, yy)
+                    xx,yy = rotate(ox+wd2, oy-hd2)
+                    ext.test(xx, yy)
+                    xx,yy = rotate(ox-wd2, oy+hd2)
+                    ext.test(xx, yy)
+                    xx,yy = rotate(ox-wd2, oy+hd2)
+                    ext.test(xx, yy)
+                
+                elif group == CC_TEXTS:
+                    width = obj['width']
+                    height = obj['height']
+                    if width < 0.0: 
+                        text = obj['text']
+                        width = len(text) * height * .7
+                    
+                    rot = obj['rotation']
+                    dorot = rot != 0.0
+                    if dorot: set_rotation(rot)  #
+                    
+                    ext.test(ox,oy)
+                    xx,yy = 0, height
+                    if dorot: xx,yy = rotate(xx,yy)  #
+                    ext.test(ox+xx, oy+yy)
+                    xx,yy = width, 0
+                    if dorot: xx,yy = rotate(xx,yy)  #
+                    ext.test(ox+xx, oy+yy)
+                    xx,yy = width, height
+                    if dorot: xx,yy = rotate(xx,yy)  #
+                    ext.test(ox+xx, oy+yy)
+                    
+                if group == CC_CIRCLES or group == CC_REGPOLYS:
+                    rad = obj['radius']
+                    ext.test(ox-rad, oy-rad)
+                    ext.test(ox+rad, oy+rad)
+                
+        return ext.extents()
+    
+    def mirror(self):
+        rslt = CNC(beta=self.beta)
+        rslt.content = copy.deepcopy(self.content)
+        
+        width = rslt.getvalue('WIDTH')
+        
+        for group in rslt.cc_idgroups:
+            objects = rslt.getgroup(group)
+            for obj in objects:
+                obj['position'][0] = width - obj['position'][0]
+                
+                if group == CC_CIRCLES:
+                    pass    # no other changes needed
+                
+                elif group == CC_CURVES:
+                    points = obj['points']
+                    for pnt in points:
+                        pnt[0] = -pnt[0]
+                    cp1s = obj['control_point_1'] 
+                    for cp1 in cp1s:
+                        cp1[0] = -cp1[0]
+                    cp2s = obj['control_point_2'] 
+                    for cp2 in cp2s:
+                        cp2[0] = -cp2[0]
+                
+                elif group == CC_POLYGONS:
+                    obj['rotations'] = 180.0 - obj['rotatation']
+                    points = obj['points']
+                    for pnt in points:
+                        pnt[0] = -pnt[0]
+                
+                elif group in (CC_RECTS, CC_REGPOLYS, CC_TEXTS):
+                    obj['rotations'] = 180.0 - obj['rotatation']
+        return rslt
     
 # ----------------------------------------------------------------------
 
@@ -544,12 +681,12 @@ class Circle(CC_Object):
         group = CC_CIRCLES
         
         if source is None:
-            if position is None: position = [0.0,0.0] #
-            if radius is None: radius = 3.0 #
+            if position is None: position = [0.0,0.0]  #
+            if radius is None: radius = 3.0  #
         
         else:
-            if position is None: position = source['position'] #
-            if radius is None: radius = source['radius'] #
+            if position is None: position = source['position']  #
+            if radius is None: radius = source['radius']  #
         
         super().__init__(group, position, beta)
         self.radius = radius
@@ -579,7 +716,7 @@ class Curve(CC_Object):
     def __str__(self):
         wants_closed = has_closed_flag(self.beta)
         lbl = ' ('
-        if wants_closed: lbl = 'Closed' if self.closed else 'Open' #
+        if wants_closed: lbl = 'Closed' if self.closed else 'Open'  #
         lbl += (' Polygon)' if self.ispoly else 'Curve)')
 
         cnt = len(self.points)
@@ -625,7 +762,7 @@ class Curve(CC_Object):
         if cnt < 1:
             self.cp1 = []
             self.cp2 = []
-            if hasptype: self.pt = [] #
+            if hasptype: self.pt = []  #
         
         else:
             if len(self.cp1) > cnt:
@@ -674,15 +811,15 @@ class Curve(CC_Object):
             "control_point_2": copy.deepcopy(self.cp2)
         }
         
-        if has_closed_flag(self.beta): rslt["closed"] = self.closed #
-        if has_point_type(self.beta): rslt["point_type"] = self.pt #
+        if has_closed_flag(self.beta): rslt["closed"] = self.closed  #
+        if has_point_type(self.beta): rslt["point_type"] = self.pt  #
 
 def curve_286(crv286, ispoly, src286=None):
     if crv286.beta != '286':
         raise ValueError('Bad object, not beta 286.')
     if src286 is None:
         crv286.ispoly = ispoly
-        if crv286.position is None: crv286.position = [0.0,0.0] #
+        if crv286.position is None: crv286.position = [0.0,0.0]  #
         crv286.points = []
         crv286.cp1 = []
         crv286.cp2 = []
@@ -704,7 +841,7 @@ def curve_285(crv285, src285):
     if src285 is None:
         crv285.closed = True
         crv285.ispoly = False
-        if crv285.position is None: crv285.position = [0.0,0.0] #
+        if crv285.position is None: crv285.position = [0.0,0.0]  #
         crv285.points = []
         crv285.cp1 = []
         crv285.cp2 = []
@@ -727,11 +864,11 @@ class Polygon(CC_Object):       # only use prior to beta 286
         super().__init__(group, position, beta)
 
         if source is None:
-            if position is None: position = [0.0,0.0] #
+            if position is None: position = [0.0,0.0]  #
             points = []
         else:
-            if position is None: position = source['position'] #
-            if rotation is None: rotation = source['rotation'] #
+            if position is None: position = source['position']  #
+            if rotation is None: rotation = source['rotation']  #
             points = source['points']
             
         self.position = position
@@ -762,15 +899,15 @@ class Rect(CC_Object):
         group = CC_RECTS
         
         if source is None:
-            if position is None: position = [0.0,0.0] #
-            if width is None: width = 10.0 #
-            if height is None: height = 5.0 #
-            if rotation is None: rotation = 0.0 #
+            if position is None: position = [0.0,0.0]  #
+            if width is None: width = 10.0  #
+            if height is None: height = 5.0  #
+            if rotation is None: rotation = 0.0  #
         else:
-            if position is None: position = source['position'] #
-            if width is None: width = source['width'] #
-            if height is None: height = source['height'] #
-            if rotation is None: rotation = source['rotation'] #
+            if position is None: position = source['position']  #
+            if width is None: width = source['width']  #
+            if height is None: height = source['height']  #
+            if rotation is None: rotation = source['rotation']  #
         
         super().__init__(group, position, beta)
         self.width = width
@@ -797,15 +934,15 @@ class RegPoly(CC_Object):
         group = CC_REGPOLYS
         
         if source is None:
-            if position is None: position = [0.0,0.0] #
-            if num_sides is None: num_sides = 6 #
-            if radius is None: radius = 5.0 #
-            if rotation is None: rotation = 0.0 #
+            if position is None: position = [0.0,0.0]  #
+            if num_sides is None: num_sides = 6  #
+            if radius is None: radius = 5.0  #
+            if rotation is None: rotation = 0.0  #
         else:
-            if position is None: position = source['position'] #
-            if num_sides is None: num_sides = source['num_sides'] #
-            if radius is None: radius = source['radius'] #
-            if rotation is None: rotation = source['rotation'] #
+            if position is None: position = source['position']  #
+            if num_sides is None: num_sides = source['num_sides']  #
+            if radius is None: radius = source['radius']  #
+            if rotation is None: rotation = source['rotation']  #
         
         super().__init__(group, position, beta)
         self.numsides = num_sides
@@ -833,19 +970,19 @@ class Text(CC_Object):
         group = CC_TEXTS
         
         if source is None:
-            if position is None: position = [0.0,0.0] #
-            if font is None: font = 'Arial' #
-            if height is None: height = 20 #
-            if width is None: width = -1 #
-            if text is None: text ='empty text' #
-            if rotation is None: rotation = 0.0 #
+            if position is None: position = [0.0,0.0]  #
+            if font is None: font = 'Arial'  #
+            if height is None: height = 20  #
+            if width is None: width = -1  #
+            if text is None: text ='empty text'  #
+            if rotation is None: rotation = 0.0  #
         else:
-            if position is None: position = source['position'] #
-            if font is None: font = source['font'] #
-            if height is None: height = source['height'] #
-            if width is None: width = source['width'] #
-            if text is None: text = source['text'] #
-            if rotation is None: rotation = source['rotation'] #
+            if position is None: position = source['position']  #
+            if font is None: font = source['font']  #
+            if height is None: height = source['height']  #
+            if width is None: width = source['width']  #
+            if text is None: text = source['text']  #
+            if rotation is None: rotation = source['rotation']  #
         
         super().__init__(group, position, beta)
         self.font = font
@@ -856,7 +993,7 @@ class Text(CC_Object):
     
     def __str__(self):
         txt = self.text
-        if len(txt) > 20: txt = txt[:9] + '..' + txt[-9:] #
+        if len(txt) > 20: txt = txt[:9] + '..' + txt[-9:]  #
         return ('Text "%s", At %s, Font "%s", Height %5.3f,' +
                 ' Rotation %5.3f, ID: %s' %
                 (txt, self.position, self.font, self.height,
@@ -879,15 +1016,15 @@ class Toolpath(CC_Object):
         group = CC_TOOLPATHS
         
         if source is None:
-            if auto is None: auto = False #
+            if auto is None: auto = False  #
             if has_contour(beta):
-                if contour_id is None: contour_id = 1 #
+                if contour_id is None: contour_id = 1  #
                 contour_list = [ contour_id ]
             else:
                 contour_list = []
-            if name is None: name = 'Toolpath 001' #
-            if end_depth is None: end_depth = 3.0 #
-            if stepdown is None: stepdown = 1.5 #
+            if name is None: name = 'Toolpath 001'  #
+            if end_depth is None: end_depth = 3.0  #
+            if stepdown is None: stepdown = 1.5  #
             details = {
                 "automatic_parameters": auto,
                 "contours": contour_list,
@@ -920,16 +1057,16 @@ class Toolpath(CC_Object):
             }
         else:
             details = copy.deepcopy(source)
-            if auto is not None: details['automatic_parameters'] = auto #
+            if auto is not None: details['automatic_parameters'] = auto  #
             if contour_id is not None:
                 if has_contour(beta):
                     contour_list = [ contour_id ]
                 else:
                     contour_list = []
                 details['contour'] = contour_list
-            if name is not None: details['name'] = name #
-            if end_depth is not None: details['end_depth'] = end_depth #
-            if stepdown is not None: details['stepdown'] = stepdown #
+            if name is not None: details['name'] = name  #
+            if end_depth is not None: details['end_depth'] = end_depth  #
+            if stepdown is not None: details['stepdown'] = stepdown  #
             
         super().__init__(group, None, beta)
         self.details = details
@@ -962,7 +1099,7 @@ class PathLink(CC_Object):
         pathtxt = ''
         for link in self.links:
             pathtxt += ', %s' % uulabel(link)
-        if len(pathtxt) > 0: pathtxt = pathtxt[2:] #
+        if len(pathtxt) > 0: pathtxt = pathtxt[2:]  #
         
         return ('ToolLink: Shape %s Using %s' % (shapetxt, pathtxt))
     
@@ -975,7 +1112,7 @@ class PathLink(CC_Object):
 # --------------------------------------------------
 
 def convert_285to286(src285):
-    rslt = CC_CNC(beta='286')
+    rslt = CNC(beta='286')
     con286 = rslt.content
     val286 = con286[CC_VALUES]
     
@@ -1042,7 +1179,7 @@ def convert_285to286(src285):
                 if ccid in xid:
                     shapetopath.append((xid[ccid], tuuid))
                     addobj = True
-        if addobj: newobjects.append(newobj) #
+        if addobj: newobjects.append(newobj)  #
     rslt.content[group] = newobjects
     
     if len(shapetopath) > 0:
@@ -1116,11 +1253,9 @@ def polygon_285to286(poly285):
     xx,yy = poly285['position']
     position = [round(xx,5), round(yy,5)]
     
-    rot = math.radians(poly285['rotation'])
+    rot = poly285['rotation']
     dorot = rot != 0.0
-    if dorot:
-        sinrot = math.sin(rot)
-        cosrot = math.cos(rot)
+    if dorot: set_rotation(rot)  #
     
     points = poly285['points']
     size = len(points)
@@ -1130,11 +1265,7 @@ def polygon_285to286(poly285):
     for idx in range(size):
         tx = points[idx][0]
         ty = points[idx][1]
-        if dorot:
-            qx = tx - xx
-            qy = ty - yy
-            tx = qx*cosrot - qy*sinrot
-            ty = qx*sinrot + qy*cosrot
+        if dorot: tx,ty = rotate(tx,ty)  #
         newpoints[idx] = [round(tx,5), round(ty,5)]
     
     if newpoints[0] != newpoints[-1]:
@@ -1155,8 +1286,10 @@ def polygon_285to286(poly285):
 
 # ----------------------------------------------------------------------
 
+'''
 dodemo = False
 if dodemo:
-    cnc = CC_CNC('Dummy.c2d')
+    cnc = CNC('Dummy.c2d')
     c2 = convert_285to286(cnc)
     c2.save('Dummy286.c2d')
+'''
